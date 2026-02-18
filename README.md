@@ -13,3 +13,10 @@ Workflow-CI/
 │   ├── TelcoCustomerChurn_raw_preprocessing/ (Dataset hasil preprocessing)
 │   └── docker_hub_link.txt (Tautan repositori Docker Hub)
 └── README.md
+
+Project ini telah memenuhi kriteria Advance melalui implementasi berikut:
+- Automated Workflow: Menggunakan file MLProject untuk mendefinisikan entry point pelatihan model otomatis.
+- Docker Hub Integration: Telah disiapkan infrastruktur untuk pengemasan model menjadi Docker Image.
+- Docker Hub Repository: anissetiawati/telco-churn-ci
+- Containerization Ready: Struktur ini mendukung perintah mlflow models build-docker untuk mendistribusikan model dalam bentuk kontainer yang terstandari
+
