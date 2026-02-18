@@ -1,0 +1,1 @@
+https://hub.docker.com/r/anissetiawati/telco-churn-ci
