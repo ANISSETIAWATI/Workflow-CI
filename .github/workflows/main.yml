@@ -23,18 +23,23 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Set MLflow Tracking URI
+        run: echo "MLFLOW_TRACKING_URI=${{ secrets.MLFLOW_TRACKING_URI }}" >> $GITHUB_ENV
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+
       - name: Run mlflow project
         run: mlflow run . --env-manager=local
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
 
-      - name: Get latest MLflow run_id
-        run: |
-          python -c "
-          import mlflow
-          client = mlflow.tracking.MlflowClient()
-          runs = client.search_runs(experiment_ids=['0'], order_by=['start_time DESC'], max_results=1)
-          print('Latest run_id:', runs[0].info.run_id)
-          "
-        env:
-          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+      - name: Install Python dependencies
+        run: pip install google-auth google-auth-oauthlib google-api-python-client
+
+      - name: Upload to GitHub
+        uses: actions/upload-artifact@v3
+        with:
+          name: model-artifacts
+          path: .
