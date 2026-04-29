@@ -39,7 +39,7 @@ jobs:
         run: pip install google-auth google-auth-oauthlib google-api-python-client
 
       - name: Upload to GitHub
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: model-artifacts
           path: .
