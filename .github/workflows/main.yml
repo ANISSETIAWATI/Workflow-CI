@@ -32,9 +32,9 @@ jobs:
           MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
           MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
 
-      - name: Get latest MLflow run_id
+      - name: Get latest MLflow run_id and model path
         run: |
-          RESULT=$(python - << 'EOF'
+          python - << 'EOF'
           import mlflow
           import os
           import sys
@@ -42,67 +42,72 @@ jobs:
           mlflow.set_tracking_uri(os.environ['MLFLOW_TRACKING_URI'])
           client = mlflow.tracking.MlflowClient()
 
+          # Cari experiment
           experiment = client.get_experiment_by_name('Default')
-
           if experiment is None:
               experiment = client.get_experiment('0')
-
           if experiment is None:
               experiments = client.search_experiments()
               if not experiments:
                   raise ValueError("Tidak ada experiment yang ditemukan!")
               experiment = experiments[0]
 
-          sys.stderr.write(f"Menggunakan experiment: {experiment.name} (ID: {experiment.experiment_id})\n")
+          print(f"Experiment: {experiment.name} (ID: {experiment.experiment_id})")
 
+          # Ambil run terbaru
           runs = client.search_runs(
               experiment_ids=[experiment.experiment_id],
               order_by=['start_time DESC'],
               max_results=1
           )
-
           if not runs:
               raise ValueError(f"Tidak ada run di experiment '{experiment.name}'")
 
           run_id = runs[0].info.run_id
-          sys.stderr.write(f"Run ID: {run_id}\n")
+          print(f"Run ID: {run_id}")
 
-          # Cari artifact path yang mengandung MLmodel
+          # List semua artifacts
+          print("\n=== DAFTAR ARTIFACTS ===")
           artifacts = client.list_artifacts(run_id)
-          sys.stderr.write(f"Artifacts: {[a.path for a in artifacts]}\n")
+          if not artifacts:
+              print("(kosong)")
+          for a in artifacts:
+              print(f"  {'[DIR]' if a.is_dir else '[FILE]'} {a.path}")
+              if a.is_dir:
+                  sub = client.list_artifacts(run_id, a.path)
+                  for s in sub:
+                      print(f"         {'[DIR]' if s.is_dir else '[FILE]'} {s.path}")
 
+          # Deteksi model path
           model_path = None
           for artifact in artifacts:
               if artifact.is_dir:
-                  # Cek apakah folder ini berisi MLmodel
                   sub_artifacts = client.list_artifacts(run_id, artifact.path)
                   sub_paths = [s.path for s in sub_artifacts]
-                  sys.stderr.write(f"  Sub-artifacts of '{artifact.path}': {sub_paths}\n")
                   if any('MLmodel' in s for s in sub_paths):
                       model_path = artifact.path
                       break
 
           if model_path is None:
-              # Fallback ke 'model' jika tidak ditemukan
               model_path = 'model'
-              sys.stderr.write("Tidak ada folder MLmodel ditemukan, fallback ke 'model'\n")
+              print("\nFallback ke path 'model'")
 
-          sys.stderr.write(f"Model path: {model_path}\n")
-          print(f"{run_id}|{model_path}")
+          print(f"\nModel path terpilih: {model_path}")
+
+          # Simpan ke GITHUB_ENV
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write(f"RUN_ID={run_id}\n")
+              f.write(f"MODEL_PATH={model_path}\n")
           EOF
-          )
-
-          RUN_ID=$(echo $RESULT | cut -d'|' -f1)
-          MODEL_PATH=$(echo $RESULT | cut -d'|' -f2)
-
-          echo "RUN_ID=$RUN_ID" >> $GITHUB_ENV
-          echo "MODEL_PATH=$MODEL_PATH" >> $GITHUB_ENV
-          echo "Run ID: $RUN_ID"
-          echo "Model Path: $MODEL_PATH"
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
           MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
           MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+
+      - name: Verify RUN_ID and MODEL_PATH
+        run: |
+          echo "RUN_ID = $RUN_ID"
+          echo "MODEL_PATH = $MODEL_PATH"
 
       - name: Install Python dependencies
         run: pip install google-auth google-auth-oauthlib google-api-python-client
@@ -116,7 +121,12 @@ jobs:
           overwrite: true
 
       - name: Build Docker Model
-        run: mlflow models build-docker -m "runs:/$RUN_ID/$MODEL_PATH" -n "${{ secrets.DOCKER_USERNAME }}/telco-churn-model" --enable-mlserver
+        run: |
+          echo "Building Docker image with runs:/$RUN_ID/$MODEL_PATH"
+          mlflow models build-docker \
+            -m "runs:/$RUN_ID/$MODEL_PATH" \
+            -n "${{ secrets.DOCKER_USERNAME }}/telco-churn-model" \
+            --enable-mlserver
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
           MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
