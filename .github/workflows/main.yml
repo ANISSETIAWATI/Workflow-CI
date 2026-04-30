@@ -29,7 +29,7 @@ jobs:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
 
       - name: Run mlflow project
-        run: mlflow run . --env-manager=local
+        run: mlflow run MLProject --env-manager=local
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
           DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
