@@ -14,6 +14,7 @@ Workflow-CI/
 │   └── docker_hub_link.txt (Tautan repositori Docker Hub)
 └── README.md
 
+
 Project ini telah memenuhi kriteria Advance melalui implementasi berikut:
 - Automated Workflow: Menggunakan file MLProject untuk mendefinisikan entry point pelatihan model otomatis.
 - Docker Hub Integration: Telah disiapkan infrastruktur untuk pengemasan model menjadi Docker Image.
