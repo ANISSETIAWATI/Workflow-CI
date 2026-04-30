@@ -37,25 +37,24 @@ jobs:
           RUN_ID=$(python - << 'EOF'
           import mlflow
           import os
+          import sys
 
           mlflow.set_tracking_uri(os.environ['MLFLOW_TRACKING_URI'])
           client = mlflow.tracking.MlflowClient()
 
-          # Coba cari experiment by name dulu
           experiment = client.get_experiment_by_name('Default')
 
-          # Jika tidak ada, gunakan experiment_id "0" (default MLflow)
           if experiment is None:
               experiment = client.get_experiment('0')
 
-          # Jika masih None, ambil semua experiment yang aktif
           if experiment is None:
               experiments = client.search_experiments()
               if not experiments:
                   raise ValueError("Tidak ada experiment yang ditemukan!")
               experiment = experiments[0]
 
-          print(f"Menggunakan experiment: {experiment.name} (ID: {experiment.experiment_id})", flush=True)
+          # Pakai stderr agar tidak ikut tertangkap RUN_ID
+          sys.stderr.write(f"Menggunakan experiment: {experiment.name} (ID: {experiment.experiment_id})\n")
 
           runs = client.search_runs(
               experiment_ids=[experiment.experiment_id],
@@ -66,6 +65,7 @@ jobs:
           if not runs:
               raise ValueError(f"Tidak ada run di experiment '{experiment.name}'")
 
+          # Hanya print run_id saja ke stdout
           print(runs[0].info.run_id)
           EOF
           )
