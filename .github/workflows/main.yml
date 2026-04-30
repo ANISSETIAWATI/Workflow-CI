@@ -1,43 +1,33 @@
 name: CI
-
 on:
   push:
     branches: [ main ]
-
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Run actions/checkout@v3
         uses: actions/checkout@v3
-
       - name: Set up Python 3.12.7
         uses: actions/setup-python@v4
         with:
           python-version: "3.12.7"
-
       - name: Check Env
         run: python --version
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Set MLflow Tracking URI
         run: echo "MLFLOW_TRACKING_URI=${{ secrets.MLFLOW_TRACKING_URI }}" >> $GITHUB_ENV
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
-
       - name: Run mlflow project
         run: mlflow run MLProject --env-manager=local
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
           DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
           DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
-
       - name: Install Python dependencies
         run: pip install google-auth google-auth-oauthlib google-api-python-client
-
       - name: Upload to GitHub
         uses: actions/upload-artifact@v4
         with:
