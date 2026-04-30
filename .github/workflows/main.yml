@@ -8,33 +8,64 @@ jobs:
     steps:
       - name: Run actions/checkout@v3
         uses: actions/checkout@v3
+
       - name: Set up Python 3.12.7
         uses: actions/setup-python@v4
         with:
           python-version: "3.12.7"
+
       - name: Check Env
         run: python --version
+
       - name: Install dependencies
         run: pip install -r requirements.txt
+
       - name: Set MLflow Tracking URI
         run: echo "MLFLOW_TRACKING_URI=${{ secrets.MLFLOW_TRACKING_URI }}" >> $GITHUB_ENV
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+
       - name: Run mlflow project
         run: mlflow run MLProject --env-manager=local
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
           MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
           MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+
       - name: Get latest MLflow run_id
         run: |
           RUN_ID=$(python - << 'EOF'
           import mlflow
           import os
+
           mlflow.set_tracking_uri(os.environ['MLFLOW_TRACKING_URI'])
           client = mlflow.tracking.MlflowClient()
+
+          # Coba cari experiment by name dulu
           experiment = client.get_experiment_by_name('Default')
-          runs = client.search_runs(experiment.experiment_id, order_by=['start_time DESC'], max_results=1)
+
+          # Jika tidak ada, gunakan experiment_id "0" (default MLflow)
+          if experiment is None:
+              experiment = client.get_experiment('0')
+
+          # Jika masih None, ambil semua experiment yang aktif
+          if experiment is None:
+              experiments = client.search_experiments()
+              if not experiments:
+                  raise ValueError("Tidak ada experiment yang ditemukan!")
+              experiment = experiments[0]
+
+          print(f"Menggunakan experiment: {experiment.name} (ID: {experiment.experiment_id})", flush=True)
+
+          runs = client.search_runs(
+              experiment_ids=[experiment.experiment_id],
+              order_by=['start_time DESC'],
+              max_results=1
+          )
+
+          if not runs:
+              raise ValueError(f"Tidak ada run di experiment '{experiment.name}'")
+
           print(runs[0].info.run_id)
           EOF
           )
@@ -44,8 +75,10 @@ jobs:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
           MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
           MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+
       - name: Install Python dependencies
         run: pip install google-auth google-auth-oauthlib google-api-python-client
+
       - name: Upload to Google Drive
         uses: adityak74/google-drive-upload-git-action@main
         with:
@@ -53,18 +86,22 @@ jobs:
           filename: "."
           folderId: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
           overwrite: true
+
       - name: Build Docker Model
         run: mlflow models build-docker -m "runs:/$RUN_ID/model" -n "${{ secrets.DOCKER_USERNAME }}/telco-churn-model" --enable-mlserver
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
           MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
           MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+
       - name: Log in to Docker Hub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
+
       - name: Tag Docker Image
         run: docker tag ${{ secrets.DOCKER_USERNAME }}/telco-churn-model ${{ secrets.DOCKER_USERNAME }}/telco-churn-model:latest
+
       - name: Push Docker Image
         run: docker push ${{ secrets.DOCKER_USERNAME }}/telco-churn-model:latest
