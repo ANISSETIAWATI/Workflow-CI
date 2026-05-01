@@ -37,7 +37,6 @@ jobs:
           python - << 'EOF'
           import mlflow
           import os
-          import sys
 
           mlflow.set_tracking_uri(os.environ['MLFLOW_TRACKING_URI'])
           client = mlflow.tracking.MlflowClient()
@@ -66,33 +65,45 @@ jobs:
           run_id = runs[0].info.run_id
           print(f"Run ID: {run_id}")
 
-          # List semua artifacts
+          # ── Fungsi rekursif untuk print semua artifacts ─────────────────────
+          def print_artifacts(run_id, path="", indent=0):
+              items = client.list_artifacts(run_id, path) if path else client.list_artifacts(run_id)
+              for a in items:
+                  prefix = "  " * indent
+                  tag = "[DIR]" if a.is_dir else "[FILE]"
+                  print(f"{prefix}{tag} {a.path}")
+                  if a.is_dir:
+                      print_artifacts(run_id, a.path, indent + 1)
+
+          # ── Fungsi rekursif untuk scan direktori yang mengandung MLmodel ────
+          def find_mlmodel_dirs(run_id, path=""):
+              found = []
+              artifacts = client.list_artifacts(run_id, path) if path else client.list_artifacts(run_id)
+              file_paths = [a.path for a in artifacts if not a.is_dir]
+              if any(p.endswith("MLmodel") for p in file_paths):
+                  found.append(path)
+              for a in artifacts:
+                  if a.is_dir:
+                      found.extend(find_mlmodel_dirs(run_id, a.path))
+              return found
+
+          # ── Print semua artifacts untuk debugging ───────────────────────────
           print("\n=== DAFTAR ARTIFACTS ===")
-          artifacts = client.list_artifacts(run_id)
-          if not artifacts:
-              print("(kosong)")
-          for a in artifacts:
-              print(f"  {'[DIR]' if a.is_dir else '[FILE]'} {a.path}")
-              if a.is_dir:
-                  sub = client.list_artifacts(run_id, a.path)
-                  for s in sub:
-                      print(f"         {'[DIR]' if s.is_dir else '[FILE]'} {s.path}")
+          print_artifacts(run_id)
 
-          # Deteksi model path
-          model_path = None
-          for artifact in artifacts:
-              if artifact.is_dir:
-                  sub_artifacts = client.list_artifacts(run_id, artifact.path)
-                  sub_paths = [s.path for s in sub_artifacts]
-                  if any('MLmodel' in s for s in sub_paths):
-                      model_path = artifact.path
-                      break
+          # ── Deteksi model path ──────────────────────────────────────────────
+          model_dirs = find_mlmodel_dirs(run_id)
+          print(f"\nDirektori dengan MLmodel: {model_dirs}")
 
-          if model_path is None:
-              model_path = 'model'
-              print("\nFallback ke path 'model'")
+          if not model_dirs:
+              raise ValueError(
+                  "FATAL: Tidak ada direktori yang mengandung file 'MLmodel'!\n"
+                  "Pastikan training script memanggil mlflow.log_model() dengan benar.\n"
+                  "Contoh: mlflow.sklearn.log_model(model, 'model')"
+              )
 
-          print(f"\nModel path terpilih: {model_path}")
+          model_path = model_dirs[0]
+          print(f"Model path terpilih: {model_path}")
 
           # Simpan ke GITHUB_ENV
           with open(os.environ['GITHUB_ENV'], 'a') as f:
@@ -108,6 +119,14 @@ jobs:
         run: |
           echo "RUN_ID = $RUN_ID"
           echo "MODEL_PATH = $MODEL_PATH"
+          if [ -z "$RUN_ID" ]; then
+            echo "ERROR: RUN_ID is empty!"
+            exit 1
+          fi
+          if [ -z "$MODEL_PATH" ]; then
+            echo "ERROR: MODEL_PATH is empty!"
+            exit 1
+          fi
 
       - name: Install Python dependencies
         run: pip install google-auth google-auth-oauthlib google-api-python-client
