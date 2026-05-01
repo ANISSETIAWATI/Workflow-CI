@@ -37,7 +37,6 @@ jobs:
           python - << 'EOF'
           import mlflow
           import os
-          import sys
 
           mlflow.set_tracking_uri(os.environ['MLFLOW_TRACKING_URI'])
           client = mlflow.tracking.MlflowClient()
@@ -78,7 +77,7 @@ jobs:
                   for s in sub:
                       print(f"         {'[DIR]' if s.is_dir else '[FILE]'} {s.path}")
 
-          # Deteksi model path
+          # Deteksi model path (cari folder yang mengandung MLmodel)
           model_path = None
           for artifact in artifacts:
               if artifact.is_dir:
@@ -86,15 +85,20 @@ jobs:
                   sub_paths = [s.path for s in sub_artifacts]
                   if any('MLmodel' in s for s in sub_paths):
                       model_path = artifact.path
+                      print(f"\nDitemukan MLmodel di: {artifact.path}")
                       break
 
           if model_path is None:
-              model_path = 'model'
-              print("\nFallback ke path 'model'")
+              root_paths = [a.path for a in artifacts]
+              if 'MLmodel' in root_paths:
+                  model_path = '.'
+                  print("\nMLmodel ditemukan di root artifact")
+              else:
+                  model_path = 'model'
+                  print(f"\n[WARNING] MLmodel tidak ditemukan, fallback ke path '{model_path}'")
 
           print(f"\nModel path terpilih: {model_path}")
 
-          # Simpan ke GITHUB_ENV
           with open(os.environ['GITHUB_ENV'], 'a') as f:
               f.write(f"RUN_ID={run_id}\n")
               f.write(f"MODEL_PATH={model_path}\n")
@@ -106,8 +110,101 @@ jobs:
 
       - name: Verify RUN_ID and MODEL_PATH
         run: |
-          echo "RUN_ID = $RUN_ID"
+          echo "RUN_ID     = $RUN_ID"
           echo "MODEL_PATH = $MODEL_PATH"
+
+      - name: Debug Artifacts
+        run: |
+          python - << 'EOF'
+          import mlflow, os
+          mlflow.set_tracking_uri(os.environ['MLFLOW_TRACKING_URI'])
+          client = mlflow.tracking.MlflowClient()
+          run_id = os.environ['RUN_ID']
+          model_path = os.environ.get('MODEL_PATH', 'model')
+
+          print("=== Artifacts di root ===")
+          root_artifacts = client.list_artifacts(run_id)
+          if not root_artifacts:
+              print("  (kosong - tidak ada artifact sama sekali!)")
+          for a in root_artifacts:
+              print(f"  {a.path} ({'DIR' if a.is_dir else 'FILE'})")
+
+          print(f"\n=== Artifacts di '{model_path}' ===")
+          try:
+              sub_artifacts = client.list_artifacts(run_id, model_path)
+              if not sub_artifacts:
+                  print("  (kosong)")
+              for a in sub_artifacts:
+                  print(f"  {a.path} ({'DIR' if a.is_dir else 'FILE'})")
+          except Exception as e:
+              print(f"  ERROR saat list artifacts: {e}")
+          EOF
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+          RUN_ID: ${{ env.RUN_ID }}
+          MODEL_PATH: ${{ env.MODEL_PATH }}
+
+      - name: Download MLflow Artifact to Local
+        run: |
+          python - << 'EOF'
+          import mlflow
+          import os
+
+          tracking_uri = os.environ['MLFLOW_TRACKING_URI']
+          username     = os.environ['MLFLOW_TRACKING_USERNAME']
+          password     = os.environ['MLFLOW_TRACKING_PASSWORD']
+          run_id       = os.environ['RUN_ID']
+          model_path   = os.environ['MODEL_PATH']
+
+          # Parse DagsHub repo dari tracking URI
+          import re
+          match = re.match(r'https://dagshub\.com/(.+?)\.mlflow', tracking_uri)
+          if match:
+              repo_path = match.group(1)
+              s3_endpoint = f"https://dagshub.com/{repo_path}.s3"
+              print(f"DagsHub repo  : {repo_path}")
+              print(f"S3 endpoint   : {s3_endpoint}")
+              os.environ['MLFLOW_S3_ENDPOINT_URL'] = s3_endpoint
+          else:
+              print(f"[WARNING] Tidak bisa parse DagsHub repo dari URI: {tracking_uri}")
+
+          # Set semua credentials
+          os.environ['MLFLOW_TRACKING_USERNAME'] = username
+          os.environ['MLFLOW_TRACKING_PASSWORD'] = password
+          os.environ['AWS_ACCESS_KEY_ID']        = username
+          os.environ['AWS_SECRET_ACCESS_KEY']    = password
+
+          mlflow.set_tracking_uri(tracking_uri)
+
+          artifact_uri = f"runs:/{run_id}/{model_path}"
+          dst_path     = "./downloaded_model"
+
+          print(f"\nDownloading   : {artifact_uri}")
+          print(f"Destination   : {dst_path}")
+
+          local_path = mlflow.artifacts.download_artifacts(
+              artifact_uri=artifact_uri,
+              dst_path=dst_path,
+          )
+
+          print(f"\nBerhasil download ke: {local_path}")
+          print("\n=== Isi folder ===")
+          for root, dirs, files in os.walk(dst_path):
+              level = root.replace(dst_path, '').count(os.sep)
+              indent = '  ' * level
+              print(f"{indent}{os.path.basename(root)}/")
+              subindent = '  ' * (level + 1)
+              for f in files:
+                  print(f"{subindent}{f}")
+          EOF
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+          RUN_ID: ${{ env.RUN_ID }}
+          MODEL_PATH: ${{ env.MODEL_PATH }}
 
       - name: Install Python dependencies
         run: pip install google-auth google-auth-oauthlib google-api-python-client
@@ -122,15 +219,43 @@ jobs:
 
       - name: Build Docker Model
         run: |
-          echo "Building Docker image with runs:/$RUN_ID/$MODEL_PATH"
-          mlflow models build-docker \
-            -m "runs:/$RUN_ID/$MODEL_PATH" \
-            -n "${{ secrets.DOCKER_USERNAME }}/telco-churn-model" \
-            --enable-mlserver
+          python - << 'EOF'
+          import os
+          import subprocess
+
+          dst_path = "./downloaded_model"
+
+          # Cari file MLmodel secara rekursif
+          mlmodel_path = None
+          for root, dirs, files in os.walk(dst_path):
+              if 'MLmodel' in files:
+                  mlmodel_path = root
+                  break
+
+          if mlmodel_path is None:
+              raise FileNotFoundError(f"File MLmodel tidak ditemukan di {dst_path}.")
+
+          print(f"MLmodel ditemukan di : {mlmodel_path}")
+          print(f"Isi folder           : {os.listdir(mlmodel_path)}")
+
+          # Tampilkan isi MLmodel untuk debug
+          with open(os.path.join(mlmodel_path, 'MLmodel'), 'r') as f:
+              print(f"\n=== Isi MLmodel ===\n{f.read()}")
+
+          docker_name = os.environ['DOCKER_IMAGE_NAME']
+
+          # Build tanpa --enable-mlserver (lebih stabil)
+          cmd = [
+              "mlflow", "models", "build-docker",
+              "-m", mlmodel_path,
+              "-n", docker_name,
+          ]
+
+          print(f"\nMenjalankan: {' '.join(cmd)}")
+          subprocess.run(cmd, check=True)
+          EOF
         env:
-          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
-          MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
-          MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+          DOCKER_IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/telco-churn-model
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v2
