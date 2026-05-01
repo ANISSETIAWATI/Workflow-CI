@@ -2,9 +2,7 @@ import pandas as pd
 import mlflow.sklearn
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
-import os
 
-mlflow.set_tracking_uri(f"file:///{os.getcwd()}/mlruns")
 mlflow.sklearn.autolog()
 
 def train():
@@ -17,10 +15,7 @@ def train():
     with mlflow.start_run(run_name="CI_Retraining_Model"):
         model = RandomForestClassifier(n_estimators=100, random_state=42)
         model.fit(X_train, y_train)
-        print("-" * 30)
-        print("Model CI Berhasil Dilatih!")
-        print(f"Tracking URI: {mlflow.get_tracking_uri()}")
-        print("-" * 30)
+        print("Model CI berhasil dilatih!")
 
 if __name__ == "__main__":
     train()
