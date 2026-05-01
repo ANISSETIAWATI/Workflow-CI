@@ -1,5 +1,7 @@
-name: Telco_Churn_Workflow
+name: churn-model
+
 conda_env: conda.yaml
+
 entry_points:
   main:
     command: "python modelling.py"
