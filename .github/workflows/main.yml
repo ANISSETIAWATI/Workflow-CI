@@ -14,10 +14,13 @@ permissions:
 jobs:
   preprocess-job:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 30
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -31,12 +34,33 @@ jobs:
 
       - name: Run preprocessing script
         run: |
-          python preprocessing/automate_Anis-Setiawati.py
+          python preprocessing/automate_Anis_Setiawati.py
+        continue-on-error: false
+
+      - name: Verify output file
+        run: |
+          if [ -f "preprocessing/TelcoCustomerChurn_raw_preprocessing/data_clean.csv" ]; then
+            echo "✅ File berhasil di-generate"
+            wc -l preprocessing/TelcoCustomerChurn_raw_preprocessing/data_clean.csv
+          else
+            echo "❌ File tidak ditemukan!"
+            exit 1
+          fi
+
+      - name: Configure Git
+        run: |
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Commit and push processed data
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add preprocessing/TelcoCustomerChurn_raw_preprocessing/data_clean.csv
-          git commit -m "Auto-update: Dataset clean baru berhasil dibuat" || echo "Tidak ada perubahan data"
-          git push
+          git diff --quiet && git diff --staged --quiet || (
+            git commit -m "🤖 Auto-update: Dataset clean baru berhasil dibuat"
+            git push
+          )
+
+      - name: Push notification (optional)
+        if: failure()
+        run: |
+          echo "⚠️ Preprocessing workflow failed - check logs"
