@@ -1,66 +1,145 @@
-name: Data Preprocessing Automation
-
+name: CI
 on:
   push:
-    branches:
-      - main
-    paths-ignore:
-      - "preprocessing/TelcoCustomerChurn_raw_preprocessing/**"
-  workflow_dispatch:
-
-permissions:
-  contents: write
-
+    branches: [ main ]
 jobs:
-  preprocess-job:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - name: Run actions/checkout@v3
+        uses: actions/checkout@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Python 3.12.7
+        uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: "3.12.7"
+
+      - name: Check Env
+        run: python --version
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pandas numpy scikit-learn
+        run: pip install -r requirements.txt
 
-      - name: Run preprocessing script
-        run: |
-          python preprocessing/automate_Anis_Setiawati.py
-        continue-on-error: false
+      - name: Set MLflow Tracking URI
+        run: echo "MLFLOW_TRACKING_URI=${{ secrets.MLFLOW_TRACKING_URI }}" >> $GITHUB_ENV
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
 
-      - name: Verify output file
-        run: |
-          if [ -f "preprocessing/TelcoCustomerChurn_raw_preprocessing/data_clean.csv" ]; then
-            echo "✅ File berhasil di-generate"
-            wc -l preprocessing/TelcoCustomerChurn_raw_preprocessing/data_clean.csv
-          else
-            echo "❌ File tidak ditemukan!"
-            exit 1
-          fi
+      - name: Run mlflow project
+        run: mlflow run MLProject --env-manager=local
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
 
-      - name: Configure Git
+      - name: Get latest MLflow run_id and model path
         run: |
-          git config --local user.name "github-actions[bot]"
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          python - << 'EOF'
+          import mlflow
+          import os
+          import sys
 
-      - name: Commit and push processed data
-        run: |
-          git add preprocessing/TelcoCustomerChurn_raw_preprocessing/data_clean.csv
-          git diff --quiet && git diff --staged --quiet || (
-            git commit -m "🤖 Auto-update: Dataset clean baru berhasil dibuat"
-            git push
+          mlflow.set_tracking_uri(os.environ['MLFLOW_TRACKING_URI'])
+          client = mlflow.tracking.MlflowClient()
+
+          # Cari experiment
+          experiment = client.get_experiment_by_name('Default')
+          if experiment is None:
+              experiment = client.get_experiment('0')
+          if experiment is None:
+              experiments = client.search_experiments()
+              if not experiments:
+                  raise ValueError("Tidak ada experiment yang ditemukan!")
+              experiment = experiments[0]
+
+          print(f"Experiment: {experiment.name} (ID: {experiment.experiment_id})")
+
+          # Ambil run terbaru
+          runs = client.search_runs(
+              experiment_ids=[experiment.experiment_id],
+              order_by=['start_time DESC'],
+              max_results=1
           )
+          if not runs:
+              raise ValueError(f"Tidak ada run di experiment '{experiment.name}'")
 
-      - name: Push notification (optional)
-        if: failure()
+          run_id = runs[0].info.run_id
+          print(f"Run ID: {run_id}")
+
+          # List semua artifacts
+          print("\n=== DAFTAR ARTIFACTS ===")
+          artifacts = client.list_artifacts(run_id)
+          if not artifacts:
+              print("(kosong)")
+          for a in artifacts:
+              print(f"  {'[DIR]' if a.is_dir else '[FILE]'} {a.path}")
+              if a.is_dir:
+                  sub = client.list_artifacts(run_id, a.path)
+                  for s in sub:
+                      print(f"         {'[DIR]' if s.is_dir else '[FILE]'} {s.path}")
+
+          # Deteksi model path
+          model_path = None
+          for artifact in artifacts:
+              if artifact.is_dir:
+                  sub_artifacts = client.list_artifacts(run_id, artifact.path)
+                  sub_paths = [s.path for s in sub_artifacts]
+                  if any('MLmodel' in s for s in sub_paths):
+                      model_path = artifact.path
+                      break
+
+          if model_path is None:
+              model_path = 'model'
+              print("\nFallback ke path 'model'")
+
+          print(f"\nModel path terpilih: {model_path}")
+
+          # Simpan ke GITHUB_ENV
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write(f"RUN_ID={run_id}\n")
+              f.write(f"MODEL_PATH={model_path}\n")
+          EOF
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+
+      - name: Verify RUN_ID and MODEL_PATH
         run: |
-          echo "⚠️ Preprocessing workflow failed - check logs"
+          echo "RUN_ID = $RUN_ID"
+          echo "MODEL_PATH = $MODEL_PATH"
+
+      - name: Install Python dependencies
+        run: pip install google-auth google-auth-oauthlib google-api-python-client
+
+      - name: Upload to Google Drive
+        uses: adityak74/google-drive-upload-git-action@main
+        with:
+          credentials: ${{ secrets.GDRIVE_CREDENTIALS }}
+          filename: "."
+          folderId: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          overwrite: true
+
+      - name: Build Docker Model
+        run: |
+          echo "Building Docker image with runs:/$RUN_ID/$MODEL_PATH"
+          mlflow models build-docker \
+            -m "runs:/$RUN_ID/$MODEL_PATH" \
+            -n "${{ secrets.DOCKER_USERNAME }}/telco-churn-model" \
+            --enable-mlserver
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Tag Docker Image
+        run: docker tag ${{ secrets.DOCKER_USERNAME }}/telco-churn-model ${{ secrets.DOCKER_USERNAME }}/telco-churn-model:latest
+
+      - name: Push Docker Image
+        run: docker push ${{ secrets.DOCKER_USERNAME }}/telco-churn-model:latest
