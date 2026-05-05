@@ -36,11 +36,11 @@ jobs:
           else
             echo "MLFLOW_TRACKING_URI=$MLFLOW_TRACKING_URI" >> $GITHUB_ENV
           fi
-          
+
           if [ -n "$DAGSHUB_USERNAME" ]; then
             echo "MLFLOW_TRACKING_USERNAME=$DAGSHUB_USERNAME" >> $GITHUB_ENV
           fi
-          
+
           if [ -n "$DAGSHUB_TOKEN" ]; then
             echo "MLFLOW_TRACKING_PASSWORD=$DAGSHUB_TOKEN" >> $GITHUB_ENV
           fi
@@ -63,16 +63,14 @@ jobs:
           import os
           import sys
           from mlflow.tracking import MlflowClient
-          
-          # Set tracking URI dari environment
+
           tracking_uri = os.getenv('MLFLOW_TRACKING_URI')
           if tracking_uri:
             mlflow.set_tracking_uri(tracking_uri)
-          
+
           client = MlflowClient()
-          
+
           try:
-            # Cari experiment
             experiment = client.get_experiment_by_name('Default')
             if experiment is None:
               experiment = client.get_experiment('0')
@@ -81,51 +79,47 @@ jobs:
               if not experiments:
                 raise ValueError("❌ Tidak ada experiment yang ditemukan!")
               experiment = experiments[0]
-            
+
             print(f"✓ Experiment ditemukan: {experiment.name} (ID: {experiment.experiment_id})")
-            
-            # Ambil run terbaru
+
             runs = client.search_runs(
               experiment_ids=[experiment.experiment_id],
               order_by=['start_time DESC'],
               max_results=1
             )
-            
+
             if not runs:
               raise ValueError(f"❌ Tidak ada run di experiment '{experiment.name}'")
-            
+
             run_id = runs[0].info.run_id
             print(f"✓ Run ID terbaru: {run_id}")
-            
-            # Validasi artifacts
+
             artifacts = client.list_artifacts(run_id)
             if not artifacts:
               raise ValueError(f"❌ Tidak ada artifacts di run {run_id}")
-            
+
             print("\n📦 Artifacts yang ditemukan:")
             for artifact in artifacts:
               status = '[DIR]' if artifact.is_dir else '[FILE]'
               print(f"  {status} {artifact.path}")
-            
-            # Deteksi model path
+
             model_path = 'model'
             for artifact in artifacts:
               if artifact.is_dir and artifact.path == 'model':
                 model_path = 'model'
                 print(f"\n✓ Model path terdeteksi: {model_path}")
                 break
-            
-            # Export ke GITHUB_ENV
+
             with open(os.environ['GITHUB_ENV'], 'a') as f:
               f.write(f"RUN_ID={run_id}\n")
               f.write(f"MODEL_PATH={model_path}\n")
               f.write(f"MODEL_URI=runs:/{run_id}/{model_path}\n")
-            
+
             print(f"\n✓ Environment variables berhasil di-set:")
             print(f"  RUN_ID={run_id}")
             print(f"  MODEL_PATH={model_path}")
             print(f"  MODEL_URI=runs:/{run_id}/{model_path}")
-            
+
           except Exception as e:
             print(f"❌ Error: {str(e)}")
             sys.exit(1)
@@ -142,31 +136,43 @@ jobs:
           python -m pip install --upgrade pip
           pip install -q docker
 
-      - name: Build Docker Image from MLflow Model
-        env:
-          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
-          MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
-          MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+      # BUG 1 FIX: indentasi step diperbaiki dari 5 spasi → 6 spasi (konsisten)
+      # BUG 2 FIX: nama secret diseragamkan menjadi DOCKER_HUB_USERNAME
+      # BUG 4 FIX: env MODEL_URI dihapus (sudah ada di GITHUB_ENV dari step sebelumnya)
+      # BUG 5 FIX: IMAGE_NAME di-export ke GITHUB_ENV agar bisa dipakai step push
+      - name: Build Docker Image
         run: |
+          # BUG 1 FIX: echo terakhir masuk ke dalam blok run (bukan di luar)
+          # BUG 2 FIX: pakai DOCKER_HUB_USERNAME (konsisten dengan secret yang ada)
+          DOCKER_USER=$(echo "${{ secrets.DOCKER_HUB_USERNAME }}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+          IMAGE_NAME="$DOCKER_USER/telco-churn-model:latest"
+
           echo "🐳 Building Docker image dengan model: $MODEL_URI"
+          echo "📦 Image name: $IMAGE_NAME"
+
           mlflow models build-docker \
-            -m "$MODEL_URI" \
-            -n "${{ secrets.DOCKER_USERNAME }}/telco-churn-model:latest" \
-            --enable-mlserver || { echo "❌ Docker build failed"; exit 1; }
-          echo "✓ Docker image berhasil di-build"
+            --model-uri "$MODEL_URI" \
+            --name "$IMAGE_NAME" || { echo "❌ Docker build failed"; exit 1; }
+
+          # BUG 5 FIX: simpan IMAGE_NAME ke GITHUB_ENV untuk dipakai step push
+          echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
+
+          echo "✅ Docker build berhasil: $IMAGE_NAME"
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          # BUG 2 FIX: diseragamkan dengan DOCKER_HUB_USERNAME
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
 
+      # BUG 3 FIX: push pakai $IMAGE_NAME dari GITHUB_ENV (sudah lowercase, sudah benar)
       - name: Push Docker Image to Docker Hub
         run: |
           echo "📤 Pushing Docker image ke Docker Hub..."
-          docker push ${{ secrets.DOCKER_USERNAME }}/telco-churn-model:latest
-          echo "✓ Docker image berhasil di-push"
-          echo "✓ Link: https://hub.docker.com/r/${{ secrets.DOCKER_USERNAME }}/telco-churn-model"
+          docker push "$IMAGE_NAME"
+          echo "✅ Docker image berhasil di-push"
+          echo "✅ Link: https://hub.docker.com/r/$(echo '${{ secrets.DOCKER_HUB_USERNAME }}' | tr '[:upper:]' '[:lower:]')/telco-churn-model"
 
       - name: Upload Training Summary
         uses: actions/upload-artifact@v4
