@@ -164,7 +164,7 @@ jobs:
         with:
           # BUG 2 FIX: diseragamkan dengan DOCKER_USERNAME
           username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          password: ${{ secrets.DOCKER_TOKEN }}
 
       # BUG 3 FIX: push pakai $IMAGE_NAME dari GITHUB_ENV (sudah lowercase, sudah benar)
       - name: Push Docker Image to Docker Hub
