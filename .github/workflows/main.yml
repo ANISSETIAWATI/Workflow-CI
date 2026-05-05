@@ -142,22 +142,24 @@ jobs:
       # BUG 5 FIX: IMAGE_NAME di-export ke GITHUB_ENV agar bisa dipakai step push
       - name: Build Docker Image
         run: |
-          # BUG 1 FIX: echo terakhir masuk ke dalam blok run (bukan di luar)
-          # BUG 2 FIX: pakai DOCKER_USERNAME (konsisten dengan secret yang ada)
           DOCKER_USER=$(echo "${{ secrets.DOCKER_USERNAME }}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
           IMAGE_NAME="$DOCKER_USER/telco-churn-model:latest"
 
-          echo "🐳 Building Docker image dengan model: $MODEL_URI"
-          echo "📦 Image name: $IMAGE_NAME"
+          echo "🐳 Generate Dockerfile dari model: $MODEL_URI"
+          mlflow models generate-dockerfile --model-uri "$MODEL_URI" --output-directory build_dir
 
-          mlflow models build-docker \
-            --model-uri "$MODEL_URI" \
-            --name "$IMAGE_NAME" || { echo "❌ Docker build failed"; exit 1; }
+          # FIX 1: Perbaiki apt install
+          sed -i 's/apt install/apt-get update -y \&\& apt-get install/g' build_dir/Dockerfile
+          
+          # FIX 2: Perbaiki URL get-pip.py khusus untuk Python 3.9
+          sed -i 's|https://bootstrap.pypa.io/get-pip.py|https://bootstrap.pypa.io/pip/3.9/get-pip.py|g' build_dir/Dockerfile
 
-          # BUG 5 FIX: simpan IMAGE_NAME ke GITHUB_ENV untuk dipakai step push
+          echo "📦 Membangun image: $IMAGE_NAME"
+          docker build -t "$IMAGE_NAME" build_dir/ || { echo "❌ Docker build failed"; exit 1; }
+
           echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
-
           echo "✅ Docker build berhasil: $IMAGE_NAME"
+          
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
