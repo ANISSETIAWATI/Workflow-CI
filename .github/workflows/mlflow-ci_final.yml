@@ -111,7 +111,7 @@ jobs:
           sed -i 's|https://bootstrap.pypa.io/get-pip.py|https://bootstrap.pypa.io/pip/3.9/get-pip.py|g' build_dir/Dockerfile
           
           # 3. Build Docker image secara manual dari folder build_dir
-          docker build -t "$IMAGE_NAME:latest" build_dir/ || { echo "❌ Docker build failed"; exit 1; }
+          docker build -t "$IMAGE_NAME:latest" build_dir/ || { echo "Docker build failed"; exit 1; }
 
       - name: Push Docker image
         run: |
