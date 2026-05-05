@@ -137,14 +137,14 @@ jobs:
           pip install -q docker
 
       # BUG 1 FIX: indentasi step diperbaiki dari 5 spasi → 6 spasi (konsisten)
-      # BUG 2 FIX: nama secret diseragamkan menjadi DOCKER_HUB_USERNAME
+      # BUG 2 FIX: nama secret diseragamkan menjadi DOCKER_USERNAME
       # BUG 4 FIX: env MODEL_URI dihapus (sudah ada di GITHUB_ENV dari step sebelumnya)
       # BUG 5 FIX: IMAGE_NAME di-export ke GITHUB_ENV agar bisa dipakai step push
       - name: Build Docker Image
         run: |
           # BUG 1 FIX: echo terakhir masuk ke dalam blok run (bukan di luar)
-          # BUG 2 FIX: pakai DOCKER_HUB_USERNAME (konsisten dengan secret yang ada)
-          DOCKER_USER=$(echo "${{ secrets.DOCKER_HUB_USERNAME }}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+          # BUG 2 FIX: pakai DOCKER_USERNAME (konsisten dengan secret yang ada)
+          DOCKER_USER=$(echo "${{ secrets.DOCKER_USERNAME }}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
           IMAGE_NAME="$DOCKER_USER/telco-churn-model:latest"
 
           echo "🐳 Building Docker image dengan model: $MODEL_URI"
@@ -162,9 +162,9 @@ jobs:
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          # BUG 2 FIX: diseragamkan dengan DOCKER_HUB_USERNAME
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+          # BUG 2 FIX: diseragamkan dengan DOCKER_USERNAME
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
       # BUG 3 FIX: push pakai $IMAGE_NAME dari GITHUB_ENV (sudah lowercase, sudah benar)
       - name: Push Docker Image to Docker Hub
@@ -172,7 +172,7 @@ jobs:
           echo "📤 Pushing Docker image ke Docker Hub..."
           docker push "$IMAGE_NAME"
           echo "✅ Docker image berhasil di-push"
-          echo "✅ Link: https://hub.docker.com/r/$(echo '${{ secrets.DOCKER_HUB_USERNAME }}' | tr '[:upper:]' '[:lower:]')/telco-churn-model"
+          echo "✅ Link: https://hub.docker.com/r/$(echo '${{ secrets.DOCKER_USERNAME }}' | tr '[:upper:]' '[:lower:]')/telco-churn-model"
 
       - name: Upload Training Summary
         uses: actions/upload-artifact@v4
