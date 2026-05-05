@@ -102,10 +102,16 @@ jobs:
           IMAGE_NAME="${{ secrets.DOCKER_USERNAME_NEW }}/telco-churn-ci"
           echo "IMAGE_NAME=$IMAGE_NAME" >> "$GITHUB_ENV"
           echo "Building Docker image with $MODEL_URI"
-          mlflow models build-docker \
-            -m "$MODEL_URI" \
-            -n "$IMAGE_NAME:latest" \
-            --enable-mlserver
+          
+          # 1. Generate Dockerfile ke folder build_dir
+          mlflow models generate-dockerfile -m "$MODEL_URI" -d build_dir --enable-mlserver
+          
+          # 2. Perbaiki bug apt-get dan URL pip khusus Python 3.9
+          sed -i 's/apt install/apt-get update -y \&\& apt-get install/g' build_dir/Dockerfile
+          sed -i 's|https://bootstrap.pypa.io/get-pip.py|https://bootstrap.pypa.io/pip/3.9/get-pip.py|g' build_dir/Dockerfile
+          
+          # 3. Build Docker image secara manual dari folder build_dir
+          docker build -t "$IMAGE_NAME:latest" build_dir/ || { echo "❌ Docker build failed"; exit 1; }
 
       - name: Push Docker image
         run: |
